@@ -40,6 +40,7 @@
 namespace FastPForLib {
 
 typedef std::map<std::string, std::shared_ptr<IntegerCODEC>> CodecMap;
+typedef std::map<std::string, std::vector<std::vector<std::shared_ptr<IntegerCODEC>>>> CodecPerThreadMap;
 
 /**
  * This class is a convenience class to generate codecs quickly.
@@ -49,6 +50,7 @@ typedef std::map<std::string, std::shared_ptr<IntegerCODEC>> CodecMap;
 class CODECFactory {
 public:
   static CodecMap scodecmap;
+  static CodecPerThreadMap scodecmap_per_thread;
 
   // hacked for convenience
   static std::vector<std::shared_ptr<IntegerCODEC>> allSchemes() {
@@ -67,24 +69,58 @@ public:
     return ans;
   }
 
-  static std::shared_ptr<IntegerCODEC> &getFromName(std::string name) {
-    if (scodecmap.find(name) == scodecmap.end()) {
-      std::cerr << "name " << name << " does not refer to a CODEC."
-                << std::endl;
-      std::cerr << "possible choices:" << std::endl;
-      for (auto i = scodecmap.begin(); i != scodecmap.end(); ++i) {
-        std::cerr << static_cast<std::string>(i->first)
-                  << std::endl; // useless cast, but just to be clear
+  static std::shared_ptr<IntegerCODEC> &getFromName(std::string name, int thread_index = -1, int is_compress = 0) {
+    if (thread_index == -1) {
+      if (scodecmap.find(name) == scodecmap.end()) {
+        std::cerr << "name " << name << " does not refer to a CODEC."
+                  << std::endl;
+        std::cerr << "possible choices:" << std::endl;
+        for (auto i = scodecmap.begin(); i != scodecmap.end(); ++i) {
+          std::cerr << static_cast<std::string>(i->first)
+                    << std::endl; // useless cast, but just to be clear
+        }
+        std::cerr << "for now, I'm going to just return 'copy'" << std::endl;
+        return scodecmap["copy"];
       }
-      std::cerr << "for now, I'm going to just return 'copy'" << std::endl;
-      return scodecmap["copy"];
+      return scodecmap[name];
+    } else {
+      if (scodecmap_per_thread.find(name) == scodecmap_per_thread.end()) {
+        std::cerr << "name " << name << " does not refer to a CODEC for multi-threading."
+                  << std::endl;
+        std::cerr << "possible choices:" << std::endl;
+        for (auto i = scodecmap_per_thread.begin(); i != scodecmap_per_thread.end(); ++i) {
+          std::cerr << static_cast<std::string>(i->first)
+                    << std::endl; // useless cast, but just to be clear
+        }
+        std::cerr << "for now, I'm going to just return 'copy'" << std::endl;
+        return scodecmap_per_thread["copy"][thread_index][is_compress];
+      }
+      return scodecmap_per_thread[name][thread_index][is_compress];
     }
-    return scodecmap[name];
   }
 };
 
 // C++11 allows better than this, but neither Microsoft nor Intel support C++11
 // fully.
+static inline CodecPerThreadMap initializefactoryPerThread() {
+  CodecPerThreadMap per_thread_map;
+  per_thread_map["simdfastpfor256"].resize(16);
+  for (int thread_index = 0; thread_index < 16; ++thread_index) {
+    per_thread_map["simdfastpfor256"][thread_index].resize(2);
+    per_thread_map["simdfastpfor256"][thread_index][0] = std::shared_ptr<IntegerCODEC>(
+      new CompositeCodec<SIMDFastPFor<8>, VariableByte>());
+    per_thread_map["simdfastpfor256"][thread_index][1] = std::shared_ptr<IntegerCODEC>(
+      new CompositeCodec<SIMDFastPFor<8>, VariableByte>());
+  }
+  per_thread_map["copy"].resize(16);
+  for (int thread_index = 0; thread_index < 16; ++thread_index) {
+    per_thread_map["copy"][thread_index].resize(2);
+    per_thread_map["copy"][thread_index][0] = std::shared_ptr<IntegerCODEC>(new JustCopy());
+    per_thread_map["copy"][thread_index][1] = std::shared_ptr<IntegerCODEC>(new JustCopy());
+  }
+  return per_thread_map;
+}
+
 static inline CodecMap initializefactory() {
   CodecMap map;
   map["fastbinarypacking8"] = std::shared_ptr<IntegerCODEC>(
@@ -150,6 +186,7 @@ static inline CodecMap initializefactory() {
 }
 
 CodecMap CODECFactory::scodecmap = initializefactory();
+CodecPerThreadMap CODECFactory::scodecmap_per_thread = initializefactoryPerThread();
 
 } // namespace FastPFor
 
